@@ -1,0 +1,53 @@
+name: Check Lab-1 with linter, formatter and run tests for benchmarks
+
+on: [push, pull_request]
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Clang, CMake and Python
+        run: |
+          sudo apt update
+          sudo apt install -y clang clang-tidy clang-format cmake python3
+
+      - name: Run clang-format
+        run: |
+          find . -type f \( -name "*.c" -o -name "*.h" \) -exec clang-format -style=file --dry-run --Werror {} +
+      #         run "find . -type f \( -name "*.c" -o -name "*.h" \) -exec clang-format -style=file -i {} +" to format code
+
+      #      - name: Run clang-tidy
+      #        run: |
+      #          mkdir build
+      #          cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -Bbuild -H.
+      #          clang-tidy $(find . -name "*.c") --quiet -- -std=23 -p build -header-filter='^$'
+
+      - name: Configure and build with CMake
+        run: |
+          mkdir build
+          cmake -Bbuild -H.
+          cmake --build build
+
+      - name: Generate input file
+        run: |
+          python3 inputGenerator.py ./build/benchmark-starter/input.txt
+
+      - name: Test benchmark-1
+        run: |
+          cd ./build/benchmark-starter/
+          ./benchmark-starter processes 1 0
+          cd ../..
+          python3 benchmarkChecker.py benchmark-1 "./build/benchmark-starter/*output.txt"
+          python3 outputCleaner.py "./build/benchmark-starter/*output.txt"
+
+      - name: Test benchmark-2
+        run: |
+          cd ./build/benchmark-starter/
+          ./benchmark-starter threads 0 1
+          cd ../..
+          python3 benchmarkChecker.py benchmark-2 "./build/benchmark-starter/*output.txt"
+          python3 outputCleaner.py "./build/benchmark-starter/*output.txt"
