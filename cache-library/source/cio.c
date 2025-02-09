@@ -40,21 +40,21 @@ void destroyLRUCache() {
 }
 
 int cioOpen(const char *path) {
-    #ifdef __APPLE__
-        int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
-        if (fd == -1) {
-            return -1;
-        }
-        int fcntl_ = fcntl(fd, F_NOCACHE, 1);
-        if (fcntl_ == -1) {
-            return -1;
-        }
-        return fd;
-    #elif defined(__linux__)
-        return open(path, O_SYNC | O_RDWR | O_CREAT | O_DIRECT, RW_ALL);
-    #else
-        return open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
-    #endif
+#ifdef __APPLE__
+    int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+    if (fd == -1) {
+        return -1;
+    }
+    int fcntl_ = fcntl(fd, F_NOCACHE, 1);
+    if (fcntl_ == -1) {
+        return -1;
+    }
+    return fd;
+#elif defined(__linux__)
+    return open(path, O_SYNC | O_RDWR | O_CREAT | O_DIRECT, RW_ALL);
+#else
+    return open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+#endif
 }
 
 int cioClose(int fd) {
