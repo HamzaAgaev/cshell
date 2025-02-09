@@ -40,20 +40,27 @@ void destroyLRUCache() {
 }
 
 int lab2Open(const char *path) {
-#ifdef __APPLE__
+#if defined(__APPLE__)
     int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
     if (fd == -1) {
         return -1;
     }
     int fcntl_ = fcntl(fd, F_NOCACHE, 1);
     if (fcntl_ == -1) {
+        close(fd);
         return -1;
     }
     return fd;
-#elif defined(__linux__)
+#elif defined(__linux__) && defined(O_DIRECT)
     return open(path, O_SYNC | O_RDWR | O_CREAT | O_DIRECT, RW_ALL);
 #else
-    return open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+    int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+    if (fd == -1) {
+        close(fd);
+        return -1;
+    }
+    posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
+    return fd;
 #endif
 }
 
