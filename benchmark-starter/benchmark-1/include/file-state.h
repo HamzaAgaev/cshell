@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 typedef struct {
-    FILE *file;
+    int fd;
     int value;
     bool isEndOfFile;
 } FileState;

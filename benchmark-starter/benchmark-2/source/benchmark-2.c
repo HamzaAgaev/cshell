@@ -1,27 +1,29 @@
 #include "benchmark-2.h"
 
+#include "benchmark-utils.h"
+#include "lab2.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 RunResult benchmark2() {
-    FILE *inputFile;
-    FILE *outputFile;
-    inputFile = fopen(INPUT_FILENAME, "r");
-    if (inputFile == NULL) {
+    int inputFd = lab2Open(INPUT_FILENAME);
+    if (inputFd == -1) {
         return (RunResult){"Can't open input file.", errno};
     }
 
     int numbersCount;
-    fscanf(inputFile, "%d", &numbersCount);
+    readIntFromFile(inputFd, &numbersCount);
 
     int *inputNumbers = (int *)malloc(numbersCount * sizeof(int));
     if (inputNumbers == NULL) {
-        fclose(inputFile);
+        lab2Close(inputFd);
         return (RunResult){"Can't allocate memory for numbers.", errno};
     }
     for (int i = 0; i < numbersCount; i++) {
-        fscanf(inputFile, "%d", &inputNumbers[i]);
+        readIntFromFile(inputFd, &inputNumbers[i]);
     }
     qsort(inputNumbers, numbersCount, sizeof(int), compare);
 
@@ -30,21 +32,27 @@ RunResult benchmark2() {
 
     char outputFileName[MAX_FILENAME_LEN];
     snprintf(outputFileName, sizeof(outputFileName), OUTPUT_FILENAME_FORMAT, fileNamePrefix);
-    outputFile = fopen(outputFileName, "w");
-    if (outputFile == NULL) {
+    int outputFd = lab2Open(outputFileName);
+    if (outputFd == -1) {
         free(inputNumbers);
-        fclose(inputFile);
+        lab2Close(inputFd);
         return (RunResult){"Can't open output file.", errno};
     }
-    fprintf(outputFile, "%d\n", numbersCount);
+    char numbersCountBuffer[MAX_CHARACTERS_FOR_INT];
+    snprintf(numbersCountBuffer, MAX_CHARACTERS_FOR_INT * sizeof(char), "%d\n", numbersCount);
+    size_t numbersCountLength = strlen(numbersCountBuffer);
+    lab2Write(outputFd, numbersCountBuffer, numbersCountLength);
 
     for (int i = 0; i < numbersCount; i++) {
         if (i == 0 || inputNumbers[i] != inputNumbers[i - 1]) {
-            fprintf(outputFile, "%d ", inputNumbers[i]);
+            char buffer[MAX_CHARACTERS_FOR_INT];
+            snprintf(buffer, MAX_CHARACTERS_FOR_INT * sizeof(char), "%d ", inputNumbers[i]);
+            size_t length = strlen(buffer);
+            lab2Write(outputFd, buffer, length);
         }
     }
     free(inputNumbers);
-    fclose(inputFile);
-    fclose(outputFile);
+    lab2Close(inputFd);
+    lab2Close(outputFd);
     return (RunResult){"Success!", SUCCESS_CODE};
 }
