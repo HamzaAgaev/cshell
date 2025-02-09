@@ -1,5 +1,6 @@
 #include "benchmark-1/include/benchmark-1.h"
 #include "benchmark-2/include/benchmark-2.h"
+#include "cio.h"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -22,6 +23,7 @@ static void *threadB2Function(void *arg) {
 }
 
 static void startBenchmarksUsingThreads(int threadsB1Count, int threadsB2Count) {
+    initializeLRUCache();
     pthread_t *threadsB1 = malloc(threadsB1Count * sizeof(pthread_t));
     pthread_t *threadsB2 = malloc(threadsB2Count * sizeof(pthread_t));
     int *threadB1Ids = malloc(threadsB1Count * sizeof(int));
@@ -58,6 +60,7 @@ static void startBenchmarksUsingThreads(int threadsB1Count, int threadsB2Count) 
     free(threadsB2);
     free(threadB1Ids);
     free(threadB2Ids);
+    destroyLRUCache();
 }
 
 static void startBenchmark(RunResult (*benchmark)(void), int i, char *bName) {
@@ -68,6 +71,7 @@ static void startBenchmark(RunResult (*benchmark)(void), int i, char *bName) {
 }
 
 static void startBenchmarksUsingProcesses(int processesB1Count, int processesB2Count) {
+    initializeLRUCache();
     for (int i = 0; i < processesB1Count; i++) {
         pid_t pid = fork();
         if (pid == 0) {
@@ -88,6 +92,7 @@ static void startBenchmarksUsingProcesses(int processesB1Count, int processesB2C
             printf("Process killed by signal: %d\n", WTERMSIG(status));
         }
     }
+    destroyLRUCache();
 }
 
 int main(int argc, char **argv) {

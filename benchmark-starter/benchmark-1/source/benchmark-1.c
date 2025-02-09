@@ -1,7 +1,9 @@
 #include "benchmark-1.h"
 
+#include "benchmark-utils.h"
 #include "file-state.h"
 #include "heap-lib.h"
+#include "cio.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -22,27 +24,25 @@ static int getNel(int i, int blockSize, int numbersCount) {
 }
 
 RunResult benchmark1() {
-    FILE *inputFile;
-    FILE *outputFile;
-    inputFile = fopen(INPUT_FILENAME, "r");
-    if (inputFile == NULL) {
+    int inputFd = cioOpen(INPUT_FILENAME);
+    if (inputFd == -1) {
         return (RunResult){"Can't open input file.", errno};
     }
 
     int numbersCount;
-    fscanf(inputFile, "%d", &numbersCount);
+    readIntFromFile(inputFd, &numbersCount);
 
     const int blockSize = (numbersCount / BLOCK_SCALE != 0) ? (numbersCount / BLOCK_SCALE) : numbersCount;
     int *const block = (int *)malloc(blockSize * sizeof(int));
     if (block == NULL) {
-        fclose(inputFile);
+        cioClose(inputFd);
         return (RunResult){"Can't allocate memory.", errno};
     }
 
     const int filesCount = ceilDiv(numbersCount, blockSize);
     char **fileNames = malloc(filesCount * sizeof(char *));//[filesCount][MAX_FILENAME_LEN]
     if (fileNames == NULL) {
-        fclose(inputFile);
+        cioClose(inputFd);
         free(block);
         return (RunResult){"Can't allocate memory.", errno};
     }
@@ -50,7 +50,7 @@ RunResult benchmark1() {
     generateRandomString(fileNamePrefix, GEN_STR_LEN + 1, DEFAULT_SEED);
 
     for (int i = 0; i < numbersCount; i++) {
-        fscanf(inputFile, "%d", &block[i % blockSize]);
+        readIntFromFile(inputFd, &block[i % blockSize]);
         if ((i != 0 && (i + 1) % blockSize == 0) || i == numbersCount - 1) {
             char tempFileName[MAX_FILENAME_LEN];
             const int fileIndex = ceilDiv((i + 1), blockSize) - 1;
@@ -59,19 +59,19 @@ RunResult benchmark1() {
                 for (int j = 0; j < fileIndex; j++) {
                     free(fileNames[j]);
                 }
-                fclose(inputFile);
+                cioClose(inputFd);
                 free(block);
                 free(fileNames);
                 return (RunResult){"Can't allocate memory.", errno};
             }
             snprintf(tempFileName, sizeof(tempFileName), TEMP_FILENAME_FORMAT, fileNamePrefix, fileIndex);
             memcpy(fileNames[fileIndex], tempFileName, sizeof(tempFileName));
-            FILE *tempFile = fopen(tempFileName, "w");
-            if (tempFile == NULL) {
+            int tempFd = cioOpen(tempFileName);
+            if (tempFd == -1) {
                 for (int j = 0; j < fileIndex + 1; j++) {
                     free(fileNames[j]);
                 }
-                fclose(inputFile);
+                cioClose(inputFd);
                 free(block);
                 free(fileNames);
                 return (RunResult){"Can't open temp file.", errno};
@@ -79,13 +79,16 @@ RunResult benchmark1() {
             const int nel = getNel(i, blockSize, numbersCount);
             qsort(block, nel, sizeof(int), compare);
             for (int j = 0; j < nel; j++) {
-                fprintf(tempFile, "%d ", block[j]);
+                char buffer[MAX_CHARACTERS_FOR_INT];
+                snprintf(buffer, MAX_CHARACTERS_FOR_INT * sizeof(char), "%d ", block[j]);
+                size_t length = strlen(buffer);
+                cioWrite(tempFd, buffer, length);
             }
-            fclose(tempFile);
+            cioClose(tempFd);
         }
     }
     free(block);
-    fclose(inputFile);
+    cioClose(inputFd);
 
     FileState fileStates[filesCount];
     ErrorCatcher catcher = {SUCCESS_CODE};
@@ -132,8 +135,8 @@ RunResult benchmark1() {
 
     char outputFileName[MAX_FILENAME_LEN];
     snprintf(outputFileName, sizeof(outputFileName), OUTPUT_FILENAME_FORMAT, fileNamePrefix);
-    outputFile = fopen(outputFileName, "w");
-    if (outputFile == NULL) {
+    int outputFd = cioOpen(outputFileName);
+    if (outputFd == -1) {
         for (int i = 0; i < filesCount; i++) {
             closeFileState(&fileStates[i]);
             remove(fileNames[i]);
@@ -143,7 +146,10 @@ RunResult benchmark1() {
         freePriorityQueue(pq);
         return (RunResult){"Can't open output file.", errno};
     }
-    fprintf(outputFile, "%d\n", numbersCount);
+    char numbersCountBuffer[MAX_CHARACTERS_FOR_INT];
+    snprintf(numbersCountBuffer, MAX_CHARACTERS_FOR_INT * sizeof(char), "%d\n", numbersCount);
+    size_t numbersCountLength = strlen(numbersCountBuffer);
+    cioWrite(outputFd, numbersCountBuffer, numbersCountLength);
 
     while (!isEmpty(pq)) {
         FileState fileState = poll(pq, &catcher);
@@ -155,10 +161,15 @@ RunResult benchmark1() {
             }
             free(fileNames);
             freePriorityQueue(pq);
-            fclose(outputFile);
+            cioClose(outputFd);
             return (RunResult){"Can't poll element from Priority Queue.", catcher.statusCode};
         }
-        fprintf(outputFile, "%d ", fileState.value);
+
+        char buffer[MAX_CHARACTERS_FOR_INT];
+        snprintf(buffer, MAX_CHARACTERS_FOR_INT * sizeof(char), "%d ", fileState.value);
+        size_t length = strlen(buffer);
+        cioWrite(outputFd, buffer, length);
+
         updateFileState(&fileState);
         if (!fileState.isEndOfFile) {
             offer(pq, fileState, &catcher);
@@ -170,7 +181,7 @@ RunResult benchmark1() {
                 }
                 free(fileNames);
                 freePriorityQueue(pq);
-                fclose(outputFile);
+                cioClose(outputFd);
                 return (RunResult){"Can't offer element to Priority Queue.", catcher.statusCode};
             }
         }
@@ -183,7 +194,7 @@ RunResult benchmark1() {
     }
     free(fileNames);
     freePriorityQueue(pq);
-    fclose(outputFile);
+    cioClose(outputFd);
 
     return (RunResult){"Success!", SUCCESS_CODE};
 }

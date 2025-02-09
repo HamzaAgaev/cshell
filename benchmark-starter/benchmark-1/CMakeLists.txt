@@ -4,4 +4,4 @@ add_library(benchmark-1
         source/heap-lib.c
 )
 target_include_directories(benchmark-1 PUBLIC include)
-target_link_libraries(benchmark-1 PRIVATE common)
+target_link_libraries(benchmark-1 PRIVATE common benchmark-common cache-library)
