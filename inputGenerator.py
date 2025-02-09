@@ -1,7 +1,7 @@
 from random import randint
 from sys import argv
 
-numbers_count = 2 ** 20 #2 ** 25
+numbers_count = 2 ** 18 #2 ** 25
 min_int = -1 * 2 ** 30
 max_int = 2 ** 30 - 1
 
