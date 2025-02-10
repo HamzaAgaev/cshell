@@ -20,23 +20,23 @@ int rightIndex(int i) {
     return 2 * i + 2;
 }
 
-static void resize(PriorityQueue *pq, ErrorCatcher *catcher) {
+static void resize(PriorityQueue *pq, ErrorHandler *handler) {
     pq->capacity *= 2;
     pq->data = (FileState *)realloc(pq->data, pq->capacity * sizeof(FileState));
     if (pq->data == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
     }
 }
 
-PriorityQueue *newPriorityQueue(int capacity, ErrorCatcher *catcher) {
+PriorityQueue *newPriorityQueue(int capacity, ErrorHandler *handler) {
     PriorityQueue *pq = (PriorityQueue *)malloc(sizeof(PriorityQueue));
     if (pq == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return pq;
     }
     pq->data = (FileState *)malloc(capacity * sizeof(FileState));
     if (pq->data == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return pq;
     }
     pq->size = 0;
@@ -53,11 +53,11 @@ bool isEmpty(PriorityQueue *pq) {
     return pq->size == 0;
 }
 
-void offer(PriorityQueue *pq, FileState value, ErrorCatcher *catcher) {
+void offer(PriorityQueue *pq, FileState value, ErrorHandler *handler) {
     if (pq->size == pq->capacity) {
-        resize(pq, catcher);
+        resize(pq, handler);
     }
-    if (catcher->statusCode != SUCCESS_CODE) {
+    if (handler->statusCode != SUCCESS_CODE) {
         return;
     }
     pq->data[pq->size] = value;
@@ -71,17 +71,17 @@ void offer(PriorityQueue *pq, FileState value, ErrorCatcher *catcher) {
     }
 }
 
-FileState peek(PriorityQueue *pq, ErrorCatcher *catcher) {
+FileState peek(PriorityQueue *pq, ErrorHandler *handler) {
     if (isEmpty(pq)) {
-        catcher->statusCode = DEFAULT_ERROR_CODE;
+        handler->statusCode = DEFAULT_ERROR_CODE;
         return (FileState){0, 0, true};
     }
     return pq->data[0];
 }
 
-FileState poll(PriorityQueue *pq, ErrorCatcher *catcher) {
+FileState poll(PriorityQueue *pq, ErrorHandler *handler) {
     if (isEmpty(pq)) {
-        catcher->statusCode = DEFAULT_ERROR_CODE;
+        handler->statusCode = DEFAULT_ERROR_CODE;
         return (FileState){0, 0, true};
     }
     FileState root = pq->data[0];

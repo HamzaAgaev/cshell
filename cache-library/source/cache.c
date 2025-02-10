@@ -4,31 +4,34 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-static size_t hashFunction(ssize_t value) {
+const size_t CACHE_BLOCK_COUNT = 64;
+const size_t CACHE_BLOCK_SIZE_IN_BYTES = 1024 * 1024;
+
+static size_t sizeHash(ssize_t value) {
     const size_t K = 2654435769;
     const size_t L = 51;
     return (size_t)((value + L) * K) & (CACHE_BLOCK_COUNT - 1);
 }
 
-static size_t hashFunctionByFdAndOffset(int fd, off_t offset) {
+static size_t sizeHashByFdAndOffset(int fd, off_t offset) {
     const ssize_t A = 37;
     const ssize_t B = 43;
     ssize_t value = (fd * A) * (offset + B);
-    return hashFunction(value);
+    return sizeHash(value);
 }
 
-LRUCache *createLRUCache(ErrorCatcher *catcher) {
+LRUCache *createLRUCache(ErrorHandler *handler) {
     LRUCache *lruCache = (LRUCache *)malloc(sizeof(LRUCache));
     if (lruCache == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return lruCache;
     }
     lruCache->listHead = NULL;
     lruCache->listTail = NULL;
     lruCache->size = 0;
-    lruCache->hashTable = (struct HashListNode **)malloc(sizeof(struct HashListNode *) * CACHE_BLOCK_COUNT);
+    lruCache->hashTable = (HashListNode **)malloc(sizeof(HashListNode *) * CACHE_BLOCK_COUNT);
     if (lruCache->hashTable == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return lruCache;
     }
     for (int i = 0; i < CACHE_BLOCK_COUNT; i++) {
@@ -37,21 +40,21 @@ LRUCache *createLRUCache(ErrorCatcher *catcher) {
     return lruCache;
 }
 
-static FileBlock *createFileBlock(int fd, off_t offset, ErrorCatcher *catcher) {
+static FileBlock *createFileBlock(int fd, off_t offset, ErrorHandler *handler) {
     FileBlock *fileBlock = (FileBlock *)malloc(sizeof(FileBlock));
     if (fileBlock == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return fileBlock;
     }
     fileBlock->fd = fd;
     fileBlock->offset = offset;
-    fileBlock->data = (unsigned char *)calloc(CACHE_BLOCK_SIZE, sizeof(unsigned char));
+    fileBlock->data = (unsigned char *)calloc(CACHE_BLOCK_SIZE_IN_BYTES, sizeof(unsigned char));
     if (fileBlock->data == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return fileBlock;
     }
     fileBlock->size = 0;
-    fileBlock->syncStatus = NEW;
+    fileBlock->status = NEW;
     return fileBlock;
 }
 
@@ -60,11 +63,11 @@ static void freeFileBlock(FileBlock *fileBlock) {
     free(fileBlock);
 }
 
-static struct DataListNode *createDataListNode(FileBlock *fileBlock, struct DataListNode *prev,
-                                               struct DataListNode *next, ErrorCatcher *catcher) {
-    struct DataListNode *listNode = (struct DataListNode *)malloc(sizeof(struct DataListNode));
+static DataListNode *createDataListNode(FileBlock *fileBlock, DataListNode *prev,
+                                        DataListNode *next, ErrorHandler *handler) {
+    DataListNode *listNode = (DataListNode *)malloc(sizeof(DataListNode));
     if (listNode == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return listNode;
     }
     listNode->fileBlock = fileBlock;
@@ -73,15 +76,15 @@ static struct DataListNode *createDataListNode(FileBlock *fileBlock, struct Data
     return listNode;
 }
 
-static void freeDataListNode(struct DataListNode *listNode) {
+static void freeDataListNode(DataListNode *listNode) {
     free(listNode);
 }
 
-static struct HashListNode *createHashListNode(struct DataListNode *listNode, struct HashListNode *prev,
-                                               struct HashListNode *next, ErrorCatcher *catcher) {
-    struct HashListNode *hashListNode = (struct HashListNode *)malloc(sizeof(struct HashListNode));
+static HashListNode *createHashListNode(DataListNode *listNode, HashListNode *prev,
+                                        HashListNode *next, ErrorHandler *handler) {
+    HashListNode *hashListNode = (HashListNode *)malloc(sizeof(HashListNode));
     if (hashListNode == NULL) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return hashListNode;
     }
     hashListNode->listNode = listNode;
@@ -90,11 +93,11 @@ static struct HashListNode *createHashListNode(struct DataListNode *listNode, st
     return hashListNode;
 }
 
-static void freeHashListNode(struct HashListNode *hashListNode) {
+static void freeHashListNode(HashListNode *hashListNode) {
     free(hashListNode);
 }
 
-static void freeCacheBlockByHashListNode(struct HashListNode *hashListNode) {
+static void freeCacheBlockByHashListNode(HashListNode *hashListNode) {
     freeFileBlock(hashListNode->listNode->fileBlock);
     freeDataListNode(hashListNode->listNode);
     freeHashListNode(hashListNode);
@@ -102,12 +105,12 @@ static void freeCacheBlockByHashListNode(struct HashListNode *hashListNode) {
 
 void freeLRUCache(LRUCache *lruCache) {
     for (int i = 0; i < CACHE_BLOCK_COUNT; i++) {
-        struct HashListNode *hashListNode = lruCache->hashTable[i];
+        HashListNode *hashListNode = lruCache->hashTable[i];
         if (hashListNode == NULL) {
             continue;
         }
         while (hashListNode != NULL) {
-            struct HashListNode *next = hashListNode->next;
+            HashListNode *next = hashListNode->next;
             freeCacheBlockByHashListNode(hashListNode);
             hashListNode = next;
         }
@@ -117,12 +120,12 @@ void freeLRUCache(LRUCache *lruCache) {
 }
 
 off_t getAlignedOffset(off_t offset) {
-    return (offset / CACHE_BLOCK_SIZE) * CACHE_BLOCK_SIZE;
+    return (off_t)((offset / CACHE_BLOCK_SIZE_IN_BYTES) * CACHE_BLOCK_SIZE_IN_BYTES);
 }
 
-static struct HashListNode *getHashListNode(LRUCache *lruCache, int fd, off_t offset) {
-    size_t hashIndex = hashFunctionByFdAndOffset(fd, offset);
-    struct HashListNode *hashListNode = lruCache->hashTable[hashIndex];
+static HashListNode *getHashListNode(LRUCache *lruCache, int fd, off_t offset) {
+    size_t hashIndex = sizeHashByFdAndOffset(fd, offset);
+    HashListNode *hashListNode = lruCache->hashTable[hashIndex];
     while (hashListNode != NULL) {
         if (hashListNode->listNode->fileBlock->fd == fd &&
             hashListNode->listNode->fileBlock->offset == offset) {
@@ -133,10 +136,10 @@ static struct HashListNode *getHashListNode(LRUCache *lruCache, int fd, off_t of
     return hashListNode;
 }
 
-static void moveDataListNodeToHead(LRUCache *lruCache, struct DataListNode *listNode) {
-    struct DataListNode *prev = listNode->prev;
-    struct DataListNode *next = listNode->next;
-    struct DataListNode *head = lruCache->listHead;
+static void moveDataListNodeToHead(LRUCache *lruCache, DataListNode *listNode) {
+    DataListNode *prev = listNode->prev;
+    DataListNode *next = listNode->next;
+    DataListNode *head = lruCache->listHead;
     if (listNode != lruCache->listHead) {
         if (prev != NULL) {
             prev->next = next;
@@ -153,8 +156,8 @@ static void moveDataListNodeToHead(LRUCache *lruCache, struct DataListNode *list
     }
 }
 
-static struct DataListNode *findDataListNode(LRUCache *lruCache, int fd, off_t offset) {
-    struct HashListNode *hashListNode = getHashListNode(lruCache, fd, offset);
+static DataListNode *findDataListNode(LRUCache *lruCache, int fd, off_t offset) {
+    HashListNode *hashListNode = getHashListNode(lruCache, fd, offset);
     if (hashListNode == NULL) {
         return NULL;
     }
@@ -162,9 +165,9 @@ static struct DataListNode *findDataListNode(LRUCache *lruCache, int fd, off_t o
     return hashListNode->listNode;
 }
 
-static void removeDataListNode(LRUCache *lruCache, struct DataListNode *listNode) {
-    struct DataListNode *prev = listNode->prev;
-    struct DataListNode *next = listNode->next;
+static void removeDataListNode(LRUCache *lruCache, DataListNode *listNode) {
+    DataListNode *prev = listNode->prev;
+    DataListNode *next = listNode->next;
     if (prev != NULL) {
         prev->next = next;
     }
@@ -181,9 +184,9 @@ static void removeDataListNode(LRUCache *lruCache, struct DataListNode *listNode
     listNode->next = NULL;
 }
 
-static void removeHashListNode(LRUCache *lruCache, struct HashListNode *hashListNode) {
-    struct HashListNode *prev = hashListNode->prev;
-    struct HashListNode *next = hashListNode->next;
+static void removeHashListNode(LRUCache *lruCache, HashListNode *hashListNode) {
+    HashListNode *prev = hashListNode->prev;
+    HashListNode *next = hashListNode->next;
     if (prev != NULL) {
         prev->next = next;
     }
@@ -192,7 +195,7 @@ static void removeHashListNode(LRUCache *lruCache, struct HashListNode *hashList
     }
     int fd = hashListNode->listNode->fileBlock->fd;
     off_t offset = hashListNode->listNode->fileBlock->offset;
-    size_t hashIndex = hashFunctionByFdAndOffset(fd, offset);
+    size_t hashIndex = sizeHashByFdAndOffset(fd, offset);
     if (lruCache->hashTable[hashIndex] == hashListNode) {
         lruCache->hashTable[hashIndex] = hashListNode->next;
     }
@@ -200,15 +203,15 @@ static void removeHashListNode(LRUCache *lruCache, struct HashListNode *hashList
     hashListNode->next = NULL;
 }
 
-void deleteCacheBlockByDataListNode(LRUCache *lruCache, struct DataListNode *listNode, ErrorCatcher *catcher) {
+void deleteCacheBlockByDataListNode(LRUCache *lruCache, DataListNode *listNode, ErrorHandler *handler) {
     FileBlock *fileBlock = listNode->fileBlock;
-    if (fileBlock->syncStatus != SYNCED) {
-        syncFileBlock(fileBlock, catcher);
+    if (fileBlock->status != SYNCED) {
+        syncFileBlock(fileBlock, handler);
     }
-    if (catcher->statusCode != SUCCESS_CODE) {
+    if (handler->statusCode != SUCCESS_CODE) {
         return;
     }
-    struct HashListNode *hashListNodeToFree = getHashListNode(
+    HashListNode *hashListNodeToFree = getHashListNode(
             lruCache, listNode->fileBlock->fd, listNode->fileBlock->offset);
     removeDataListNode(lruCache, listNode);
     removeHashListNode(lruCache, hashListNodeToFree);
@@ -216,36 +219,27 @@ void deleteCacheBlockByDataListNode(LRUCache *lruCache, struct DataListNode *lis
     lruCache->size--;
 }
 
-size_t syncFileBlock(FileBlock *fileBlock, ErrorCatcher *catcher) {
+size_t syncFileBlock(FileBlock *fileBlock, ErrorHandler *handler) {
     size_t bytesSynced = 0;
-    off_t initialOffset = lseek(fileBlock->fd, 0, SEEK_CUR);
-    if (initialOffset == -1) {
-        catcher->statusCode = errno;
-        return bytesSynced;
-    }
     off_t offset = fileBlock->offset;
     size_t size = fileBlock->size;
     unsigned char *data = fileBlock->data;
     if (lseek(fileBlock->fd, offset, SEEK_SET) == -1) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return bytesSynced;
     }
-    bytesSynced = write(fileBlock->fd, data, size);
+    bytesSynced = pwrite(fileBlock->fd, data, size, offset);
     if (bytesSynced == -1) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return bytesSynced;
     }
-    fileBlock->syncStatus = SYNCED;
-    if (lseek(fileBlock->fd, initialOffset, SEEK_SET) == -1) {
-        catcher->statusCode = errno;
-        return bytesSynced;
-    }
+    fileBlock->status = SYNCED;
     return bytesSynced;
 }
 
-static struct DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t offset, ErrorCatcher *catcher) {
-    size_t hashIndex = hashFunctionByFdAndOffset(fd, offset);
-    struct HashListNode *hashListNode = lruCache->hashTable[hashIndex];
+static DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t offset, ErrorHandler *handler) {
+    size_t hashIndex = sizeHashByFdAndOffset(fd, offset);
+    HashListNode *hashListNode = lruCache->hashTable[hashIndex];
     bool isEmptyNode = false;
     if (hashListNode == NULL) {
         isEmptyNode = true;
@@ -253,17 +247,17 @@ static struct DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t of
     while (!isEmptyNode && hashListNode->next != NULL) {
         hashListNode = hashListNode->next;
     }
-    struct DataListNode *listNode = NULL;
-    FileBlock *fileBlock = createFileBlock(fd, offset, catcher);
-    if (catcher->statusCode != SUCCESS_CODE) {
+    DataListNode *listNode = NULL;
+    FileBlock *fileBlock = createFileBlock(fd, offset, handler);
+    if (handler->statusCode != SUCCESS_CODE) {
         return listNode;
     }
-    listNode = createDataListNode(fileBlock, NULL, NULL, catcher);
-    if (catcher->statusCode != SUCCESS_CODE) {
+    listNode = createDataListNode(fileBlock, NULL, NULL, handler);
+    if (handler->statusCode != SUCCESS_CODE) {
         return listNode;
     }
-    struct HashListNode *newHashListNode = createHashListNode(listNode, hashListNode, NULL, catcher);
-    if (catcher->statusCode != SUCCESS_CODE) {
+    HashListNode *newHashListNode = createHashListNode(listNode, hashListNode, NULL, handler);
+    if (handler->statusCode != SUCCESS_CODE) {
         return listNode;
     }
     if (!isEmptyNode) {
@@ -273,8 +267,8 @@ static struct DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t of
     }
     // вытеснение
     if (lruCache->size == CACHE_BLOCK_COUNT) {
-        struct DataListNode *listTail = lruCache->listTail;
-        deleteCacheBlockByDataListNode(lruCache, listTail, catcher);
+        DataListNode *listTail = lruCache->listTail;
+        deleteCacheBlockByDataListNode(lruCache, listTail, handler);
     }
     moveDataListNodeToHead(lruCache, listNode);
     lruCache->size++;
@@ -284,13 +278,13 @@ static struct DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t of
     return listNode;
 }
 
-FileBlock *getFileBlock(LRUCache *lruCache, int fd, off_t offset, ErrorCatcher *catcher) {
+FileBlock *getFileBlock(LRUCache *lruCache, int fd, off_t offset, ErrorHandler *handler) {
     FileBlock *fileBlock = NULL;
-    struct DataListNode *listNode = findDataListNode(lruCache, fd, offset);
+    DataListNode *listNode = findDataListNode(lruCache, fd, offset);
     if (listNode == NULL) {
-        listNode = addDataListNode(lruCache, fd, offset, catcher);
+        listNode = addDataListNode(lruCache, fd, offset, handler);
     }
-    if (catcher->statusCode != SUCCESS_CODE) {
+    if (handler->statusCode != SUCCESS_CODE) {
         return fileBlock;
     }
     fileBlock = listNode->fileBlock;

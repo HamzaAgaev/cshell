@@ -5,10 +5,10 @@
 
 #include <errno.h>
 
-void initializeFileState(FileState *fileState, const char *filename, ErrorCatcher *catcher) {
+void initializeFileState(FileState *fileState, const char *filename, ErrorHandler *handler) {
     fileState->fd = lab2Open(filename);
     if (fileState->fd == -1) {
-        catcher->statusCode = errno;
+        handler->statusCode = errno;
         return;
     }
     fileState->isEndOfFile = false;

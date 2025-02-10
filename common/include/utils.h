@@ -21,7 +21,7 @@ typedef struct {
 
 typedef struct {
     int statusCode;
-} ErrorCatcher;
+} ErrorHandler;
 
 void generateRandomString(char *str, int length, unsigned int seed);
 
