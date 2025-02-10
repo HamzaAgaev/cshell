@@ -9,26 +9,20 @@
 #include <unistd.h>
 
 #define RW_ALL 0666
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 static pthread_mutex_t commonMutex;
-static ErrorCatcher catcher = {SUCCESS_CODE};
+static ErrorHandler handler = {SUCCESS_CODE};
 static LRUCache *lruCache = NULL;
 
 static size_t ceilDiv(size_t a, size_t b) {
     return a / b + (a % b != 0);
 }
 
-static size_t min(size_t a, size_t b) {
-    if (a < b) {
-        return a;
-    }
-    return b;
-}
-
 void initializeLRUCache() {
     pthread_mutex_init(&commonMutex, NULL);
     if (lruCache == NULL) {
-        lruCache = createLRUCache(&catcher);
+        lruCache = createLRUCache(&handler);
     }
 }
 
@@ -39,8 +33,8 @@ void destroyLRUCache() {
     pthread_mutex_destroy(&commonMutex);
 }
 
-int cioOpen(const char *path) {
 #if defined(__APPLE__)
+static int cioOpenApple(const char *path) {
     int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
     if (fd == -1) {
         return -1;
@@ -51,9 +45,17 @@ int cioOpen(const char *path) {
         return -1;
     }
     return fd;
-#elif defined(__linux__) && defined(O_DIRECT)
+}
+#endif
+
+#if defined(__linux__) && defined(O_DIRECT)
+static int cioOpenLinux(const char *path) {
     return open(path, O_SYNC | O_RDWR | O_CREAT | O_DIRECT, RW_ALL);
-#else
+}
+#endif
+
+#if !defined(__APPLE__) && !(defined(__linux__) && defined(O_DIRECT))
+static int cioOpenUnknown(const char *path) {
     int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
     if (fd == -1) {
         close(fd);
@@ -61,18 +63,28 @@ int cioOpen(const char *path) {
     }
     posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
     return fd;
+}
+#endif
+
+int cioOpen(const char *path) {
+#if defined(__APPLE__)
+    return cioOpenApple(path);
+#elif defined(__linux__) && defined(O_DIRECT)
+    return cioOpenLinux(path);
+#else
+    return cioOpenUnknown(path);
 #endif
 }
 
 int cioClose(int fd) {
     pthread_mutex_lock(&commonMutex);
-    struct DataListNode *listNode = lruCache->listHead;
+    DataListNode *listNode = lruCache->listHead;
     while (listNode != NULL) {
         int currentFd = listNode->fileBlock->fd;
-        struct DataListNode *listNodeCopy = listNode;
+        DataListNode *listNodeCopy = listNode;
         listNode = listNode->next;
         if (currentFd == fd) {
-            deleteCacheBlockByDataListNode(lruCache, listNodeCopy, &catcher);
+            deleteCacheBlockByDataListNode(lruCache, listNodeCopy, &handler);
         }
     }
     pthread_mutex_unlock(&commonMutex);
@@ -80,13 +92,22 @@ int cioClose(int fd) {
 }
 
 static void readBlockFromFile(FileBlock *fileBlock, int fd) {
-    ssize_t bytesRead = read(fd, fileBlock->data, CACHE_BLOCK_SIZE);
+    off_t offset = lseek(fd, 0, SEEK_CUR);
+    if (offset == -1) {
+        handler.statusCode = errno;
+        return;
+    }
+    ssize_t bytesRead = pread(fd, fileBlock->data, CACHE_BLOCK_SIZE_IN_BYTES, offset);
     if (bytesRead == -1) {
-        catcher.statusCode = errno;
+        handler.statusCode = errno;
+        return;
+    }
+    if (lseek(fd, offset + bytesRead, SEEK_SET) == -1) {
+        handler.statusCode = errno;
         return;
     }
     fileBlock->size = bytesRead;
-    fileBlock->syncStatus = READ;
+    fileBlock->status = READ;
 }
 
 ssize_t cioRead(int fd, void *buf, size_t count) {
@@ -96,21 +117,21 @@ ssize_t cioRead(int fd, void *buf, size_t count) {
     }
     off_t alignedOffset = getAlignedOffset(offset);
     off_t offsetInBlock = offset - alignedOffset;
-    size_t bytesBeUsedInCache = ceilDiv(offsetInBlock + count, CACHE_BLOCK_SIZE) * CACHE_BLOCK_SIZE;
+    size_t bytesBeUsedInCache = ceilDiv(offsetInBlock + count, CACHE_BLOCK_SIZE_IN_BYTES) * CACHE_BLOCK_SIZE_IN_BYTES;
     if (lseek(fd, alignedOffset, SEEK_SET) == -1) {
         return -1;
     }
     pthread_mutex_lock(&commonMutex);
     ssize_t resultReadSize = 0;
-    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesBeUsedInCache; currentOffset += CACHE_BLOCK_SIZE) {
-        FileBlock *fileBlock = getFileBlock(lruCache, fd, currentOffset, &catcher);
-        if (catcher.statusCode != SUCCESS_CODE) {
+    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesBeUsedInCache; currentOffset += (off_t)CACHE_BLOCK_SIZE_IN_BYTES) {
+        FileBlock *fileBlock = getFileBlock(lruCache, fd, currentOffset, &handler);
+        if (handler.statusCode != SUCCESS_CODE) {
             return -1;
         }
-        if (fileBlock->syncStatus == NEW) {
+        if (fileBlock->status == NEW) {
             readBlockFromFile(fileBlock, fd);
         }
-        if (catcher.statusCode != SUCCESS_CODE) {
+        if (handler.statusCode != SUCCESS_CODE) {
             return -1;
         }
         off_t beginOffset;
@@ -120,10 +141,10 @@ ssize_t cioRead(int fd, void *buf, size_t count) {
         } else {
             beginOffset = 0;
         }
-        if (currentOffset + CACHE_BLOCK_SIZE <= offset + count) {
-            endOffset = CACHE_BLOCK_SIZE;
+        if (currentOffset + CACHE_BLOCK_SIZE_IN_BYTES <= offset + count) {
+            endOffset = (off_t)CACHE_BLOCK_SIZE_IN_BYTES;
         } else {
-            endOffset = (off_t)((offset + count) % CACHE_BLOCK_SIZE);
+            endOffset = (off_t)((offset + count) % CACHE_BLOCK_SIZE_IN_BYTES);
         }
         size_t bytesBeReadToBuffer = 0;
         if (fileBlock->size >= endOffset) {
@@ -146,18 +167,18 @@ ssize_t cioWrite(int fd, const void *buf, size_t count) {
     }
     off_t alignedOffset = getAlignedOffset(offset);
     off_t offsetInBlock = offset - alignedOffset;
-    size_t bytesBeUsedInCache = ceilDiv(offsetInBlock + count, CACHE_BLOCK_SIZE) * CACHE_BLOCK_SIZE;
+    size_t bytesBeUsedInCache = ceilDiv(offsetInBlock + count, CACHE_BLOCK_SIZE_IN_BYTES) * CACHE_BLOCK_SIZE_IN_BYTES;
     if (lseek(fd, alignedOffset, SEEK_SET) == -1) {
         return -1;
     }
     pthread_mutex_lock(&commonMutex);
     ssize_t resultWrittenSize = 0;
-    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesBeUsedInCache; currentOffset += CACHE_BLOCK_SIZE) {
-        FileBlock *fileBlock = getFileBlock(lruCache, fd, currentOffset, &catcher);
-        if (catcher.statusCode != SUCCESS_CODE) {
+    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesBeUsedInCache; currentOffset += (off_t)CACHE_BLOCK_SIZE_IN_BYTES) {
+        FileBlock *fileBlock = getFileBlock(lruCache, fd, currentOffset, &handler);
+        if (handler.statusCode != SUCCESS_CODE) {
             return -1;
         }
-        if (fileBlock->syncStatus == NEW) {
+        if (fileBlock->status == NEW) {
             readBlockFromFile(fileBlock, fd);
         }
         off_t beginOffset;
@@ -167,17 +188,17 @@ ssize_t cioWrite(int fd, const void *buf, size_t count) {
         } else {
             beginOffset = 0;
         }
-        if (currentOffset + CACHE_BLOCK_SIZE <= offset + count) {
-            endOffset = CACHE_BLOCK_SIZE;
+        if (currentOffset + CACHE_BLOCK_SIZE_IN_BYTES <= offset + count) {
+            endOffset = (off_t)CACHE_BLOCK_SIZE_IN_BYTES;
         } else {
-            endOffset = (off_t)((offset + count) % CACHE_BLOCK_SIZE);
+            endOffset = (off_t)((offset + count) % CACHE_BLOCK_SIZE_IN_BYTES);
         }
         size_t bytesBeWrittenToBuffer = endOffset - beginOffset;
         memcpy(fileBlock->data + beginOffset, (unsigned char *)buf + resultWrittenSize, bytesBeWrittenToBuffer);
         if (fileBlock->size < endOffset) {
             fileBlock->size = endOffset;
         }
-        fileBlock->syncStatus = CHANGED;
+        fileBlock->status = CHANGED;
         resultWrittenSize += (ssize_t)bytesBeWrittenToBuffer;
     }
     pthread_mutex_unlock(&commonMutex);
@@ -188,10 +209,6 @@ ssize_t cioWrite(int fd, const void *buf, size_t count) {
 }
 
 off_t cioLseek(int fd, off_t offset, int whence) {
-    int fSync = cioFsync(fd);
-    if (fSync == -1) {
-        return -1;
-    }
     return lseek(fd, offset, whence);
 }
 
@@ -201,11 +218,11 @@ int cioFsync(int fd) {
     size_t totalSyncedBytes = 0;
     for (int i = 0; i < cacheSize; i++) {
         FileBlock *fileBlock = lruCache->listHead[i].fileBlock;
-        SyncStatus syncStatus = fileBlock->syncStatus;
+        SyncStatus syncStatus = fileBlock->status;
         int currentFd = fileBlock->fd;
         if (currentFd == fd && syncStatus != SYNCED) {
-            size_t bytesSynced = syncFileBlock(fileBlock, &catcher);
-            if (catcher.statusCode != SUCCESS_CODE) {
+            size_t bytesSynced = syncFileBlock(fileBlock, &handler);
+            if (handler.statusCode != SUCCESS_CODE) {
                 return -1;
             }
             totalSyncedBytes += bytesSynced;

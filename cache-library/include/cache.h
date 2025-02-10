@@ -5,8 +5,8 @@
 
 #include <sys/types.h>
 
-#define CACHE_BLOCK_COUNT 64
-#define CACHE_BLOCK_SIZE (1024 * 1024)
+extern const size_t CACHE_BLOCK_COUNT;
+extern const size_t CACHE_BLOCK_SIZE_IN_BYTES;
 
 typedef enum {
     NEW,
@@ -16,42 +16,41 @@ typedef enum {
 } SyncStatus;
 
 // блок для данных файла, хранящий в себе fd и offset относительно начала файла
-// offset кратен CACHE_BLOCK_SIZE
+// offset кратен CACHE_BLOCK_SIZE_IN_BYTES
 typedef struct {
     int fd;
     off_t offset;
     unsigned char *data;
     size_t size;
-    SyncStatus syncStatus;
+    SyncStatus status;
 } FileBlock;
 
-// узел связанного списка для хранения блоков кеша
-struct DataListNode {
+typedef struct DataListNode {
     FileBlock *fileBlock;
     struct DataListNode *prev;
     struct DataListNode *next;
-};
+} DataListNode;
 
 // узел связанного списка для хэш-таблицы (хранил ссылку на узел DataListNode)
-struct HashListNode {
-    struct DataListNode *listNode;
+typedef struct HashListNode {
+    DataListNode *listNode;
     struct HashListNode *prev;
     struct HashListNode *next;
-};
+} HashListNode;
 
 // структура для хранения кэша
 typedef struct {
-    struct DataListNode *listHead;
-    struct DataListNode *listTail;
+    DataListNode *listHead;
+    DataListNode *listTail;
     size_t size;
-    struct HashListNode **hashTable;
+    HashListNode **hashTable;
 } LRUCache;
 
-LRUCache *createLRUCache(ErrorCatcher *catcher);
+LRUCache *createLRUCache(ErrorHandler *handler);
 void freeLRUCache(LRUCache *lruCache);
 off_t getAlignedOffset(off_t offset);
-void deleteCacheBlockByDataListNode(LRUCache *lruCache, struct DataListNode *listNode, ErrorCatcher *catcher);
-size_t syncFileBlock(FileBlock *fileBlock, ErrorCatcher *catcher);
-FileBlock *getFileBlock(LRUCache *lruCache, int fd, off_t offset, ErrorCatcher *catcher);
+void deleteCacheBlockByDataListNode(LRUCache *lruCache, DataListNode *listNode, ErrorHandler *handler);
+size_t syncFileBlock(FileBlock *fileBlock, ErrorHandler *handler);
+FileBlock *getFileBlock(LRUCache *lruCache, int fd, off_t offset, ErrorHandler *handler);
 
 #endif//CSHELL_CACHE_H
