@@ -91,36 +91,36 @@ RunResult benchmark1() {
     lab2Close(inputFd);
 
     FileState fileStates[filesCount];
-    ErrorCatcher catcher = {SUCCESS_CODE};
+    ErrorHandler handler = {SUCCESS_CODE};
 
     for (int i = 0; i < filesCount; i++) {
-        initializeFileState(&fileStates[i], fileNames[i], &catcher);
-        if (catcher.statusCode != SUCCESS_CODE) {
+        initializeFileState(&fileStates[i], fileNames[i], &handler);
+        if (handler.statusCode != SUCCESS_CODE) {
             for (int j = 0; j < i; j++) {
                 closeFileState(&fileStates[j]);
                 remove(fileNames[j]);
                 free(fileNames[j]);
             }
             free(fileNames);
-            return (RunResult){"Can't initialize File States.", catcher.statusCode};
+            return (RunResult){"Can't initialize File States.", handler.statusCode};
         }
     }
 
-    PriorityQueue *const pq = newPriorityQueue(filesCount, &catcher);
-    if (catcher.statusCode != SUCCESS_CODE) {
+    PriorityQueue *const pq = newPriorityQueue(filesCount, &handler);
+    if (handler.statusCode != SUCCESS_CODE) {
         for (int i = 0; i < filesCount; i++) {
             closeFileState(&fileStates[i]);
             remove(fileNames[i]);
             free(fileNames[i]);
         }
         free(fileNames);
-        return (RunResult){"Can't create Priority Queue.", catcher.statusCode};
+        return (RunResult){"Can't create Priority Queue.", handler.statusCode};
     }
 
     for (int i = 0; i < filesCount; i++) {
         if (!fileStates[i].isEndOfFile) {
-            offer(pq, fileStates[i], &catcher);
-            if (catcher.statusCode != SUCCESS_CODE) {
+            offer(pq, fileStates[i], &handler);
+            if (handler.statusCode != SUCCESS_CODE) {
                 for (int j = 0; j < filesCount; j++) {
                     closeFileState(&fileStates[j]);
                     remove(fileNames[j]);
@@ -128,7 +128,7 @@ RunResult benchmark1() {
                 }
                 free(fileNames);
                 freePriorityQueue(pq);
-                return (RunResult){"Can't offer element to Priority Queue.", catcher.statusCode};
+                return (RunResult){"Can't offer element to Priority Queue.", handler.statusCode};
             }
         }
     }
@@ -152,8 +152,8 @@ RunResult benchmark1() {
     lab2Write(outputFd, numbersCountBuffer, numbersCountLength);
 
     while (!isEmpty(pq)) {
-        FileState fileState = poll(pq, &catcher);
-        if (catcher.statusCode != SUCCESS_CODE) {
+        FileState fileState = poll(pq, &handler);
+        if (handler.statusCode != SUCCESS_CODE) {
             for (int i = 0; i < filesCount; i++) {
                 closeFileState(&fileStates[i]);
                 remove(fileNames[i]);
@@ -162,7 +162,7 @@ RunResult benchmark1() {
             free(fileNames);
             freePriorityQueue(pq);
             lab2Close(outputFd);
-            return (RunResult){"Can't poll element from Priority Queue.", catcher.statusCode};
+            return (RunResult){"Can't poll element from Priority Queue.", handler.statusCode};
         }
 
         char buffer[MAX_CHARACTERS_FOR_INT];
@@ -172,8 +172,8 @@ RunResult benchmark1() {
 
         updateFileState(&fileState);
         if (!fileState.isEndOfFile) {
-            offer(pq, fileState, &catcher);
-            if (catcher.statusCode != SUCCESS_CODE) {
+            offer(pq, fileState, &handler);
+            if (handler.statusCode != SUCCESS_CODE) {
                 for (int i = 0; i < filesCount; i++) {
                     closeFileState(&fileStates[i]);
                     remove(fileNames[i]);
@@ -182,7 +182,7 @@ RunResult benchmark1() {
                 free(fileNames);
                 freePriorityQueue(pq);
                 lab2Close(outputFd);
-                return (RunResult){"Can't offer element to Priority Queue.", catcher.statusCode};
+                return (RunResult){"Can't offer element to Priority Queue.", handler.statusCode};
             }
         }
     }
