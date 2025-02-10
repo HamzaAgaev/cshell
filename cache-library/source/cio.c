@@ -96,13 +96,13 @@ ssize_t cioRead(int fd, void *buf, size_t count) {
     }
     off_t alignedOffset = getAlignedOffset(offset);
     off_t offsetInBlock = offset - alignedOffset;
-    size_t bytesToBeReadInCache = ceilDiv(offsetInBlock + count, CACHE_BLOCK_SIZE) * CACHE_BLOCK_SIZE;
+    size_t bytesBeUsedInCache = ceilDiv(offsetInBlock + count, CACHE_BLOCK_SIZE) * CACHE_BLOCK_SIZE;
     if (lseek(fd, alignedOffset, SEEK_SET) == -1) {
         return -1;
     }
     pthread_mutex_lock(&commonMutex);
     ssize_t resultReadSize = 0;
-    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesToBeReadInCache; currentOffset += CACHE_BLOCK_SIZE) {
+    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesBeUsedInCache; currentOffset += CACHE_BLOCK_SIZE) {
         FileBlock *fileBlock = getFileBlock(lruCache, fd, currentOffset, &catcher);
         if (catcher.statusCode != SUCCESS_CODE) {
             return -1;
@@ -125,12 +125,12 @@ ssize_t cioRead(int fd, void *buf, size_t count) {
         } else {
             endOffset = (off_t)((offset + count) % CACHE_BLOCK_SIZE);
         }
-        size_t bytesToBeReadToBuffer = 0;
+        size_t bytesBeReadToBuffer = 0;
         if (fileBlock->size >= endOffset) {
-            bytesToBeReadToBuffer = min(endOffset - beginOffset, fileBlock->size);
+            bytesBeReadToBuffer = min(endOffset - beginOffset, fileBlock->size);
         }
-        memcpy((unsigned char *)buf + currentOffset - alignedOffset, fileBlock->data + beginOffset, bytesToBeReadToBuffer);
-        resultReadSize += (ssize_t)bytesToBeReadToBuffer;
+        memcpy((unsigned char *)buf + resultReadSize, fileBlock->data + beginOffset, bytesBeReadToBuffer);
+        resultReadSize += (ssize_t)bytesBeReadToBuffer;
     }
     pthread_mutex_unlock(&commonMutex);
     if (lseek(fd, (off_t)(offset + resultReadSize), SEEK_SET) == -1) {
@@ -146,13 +146,13 @@ ssize_t cioWrite(int fd, const void *buf, size_t count) {
     }
     off_t alignedOffset = getAlignedOffset(offset);
     off_t offsetInBlock = offset - alignedOffset;
-    size_t bytesToBeWrittenToCache = ceilDiv(count, CACHE_BLOCK_SIZE) * CACHE_BLOCK_SIZE;
+    size_t bytesBeUsedInCache = ceilDiv(offsetInBlock + count, CACHE_BLOCK_SIZE) * CACHE_BLOCK_SIZE;
     if (lseek(fd, alignedOffset, SEEK_SET) == -1) {
         return -1;
     }
     pthread_mutex_lock(&commonMutex);
     ssize_t resultWrittenSize = 0;
-    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesToBeWrittenToCache; currentOffset += CACHE_BLOCK_SIZE) {
+    for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesBeUsedInCache; currentOffset += CACHE_BLOCK_SIZE) {
         FileBlock *fileBlock = getFileBlock(lruCache, fd, currentOffset, &catcher);
         if (catcher.statusCode != SUCCESS_CODE) {
             return -1;
@@ -172,13 +172,13 @@ ssize_t cioWrite(int fd, const void *buf, size_t count) {
         } else {
             endOffset = (off_t)((offset + count) % CACHE_BLOCK_SIZE);
         }
-        size_t bytesToBeWrittenToBuffer = endOffset - beginOffset;
-        memcpy(fileBlock->data + beginOffset, (unsigned char *)buf + currentOffset - alignedOffset, bytesToBeWrittenToBuffer);
+        size_t bytesBeWrittenToBuffer = endOffset - beginOffset;
+        memcpy(fileBlock->data + beginOffset, (unsigned char *)buf + resultWrittenSize, bytesBeWrittenToBuffer);
         if (fileBlock->size < endOffset) {
             fileBlock->size = endOffset;
         }
         fileBlock->syncStatus = CHANGED;
-        resultWrittenSize += (ssize_t)bytesToBeWrittenToBuffer;
+        resultWrittenSize += (ssize_t)bytesBeWrittenToBuffer;
     }
     pthread_mutex_unlock(&commonMutex);
     if (lseek(fd, (off_t)(offset + resultWrittenSize), SEEK_SET) == -1) {
