@@ -234,6 +234,11 @@ size_t syncFileBlock(FileBlock *fileBlock, ErrorHandler *handler) {
     return bytesSynced;
 }
 
+static void removeLeastRecentlyUsed(LRUCache *lruCache, ErrorHandler *handler) {
+    DataListNode *listTail = lruCache->listTail;
+    deleteCacheBlockByDataListNode(lruCache, listTail, handler);
+}
+
 static DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t offset, ErrorHandler *handler) {
     size_t hashIndex = sizeHashByFdAndOffset(fd, offset);
     HashListNode *hashListNode = lruCache->hashTable[hashIndex];
@@ -262,10 +267,11 @@ static DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t offset, E
     } else {
         lruCache->hashTable[hashIndex] = newHashListNode;
     }
-    // вытеснение
     if (lruCache->size == CACHE_BLOCK_COUNT) {
-        DataListNode *listTail = lruCache->listTail;
-        deleteCacheBlockByDataListNode(lruCache, listTail, handler);
+        removeLeastRecentlyUsed(lruCache, handler);
+    }
+    if (handler->statusCode != SUCCESS_CODE) {
+        return listNode;
     }
     moveDataListNodeToHead(lruCache, listNode);
     lruCache->size++;
