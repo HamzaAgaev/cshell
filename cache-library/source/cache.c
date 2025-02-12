@@ -9,14 +9,11 @@ const size_t CACHE_BLOCK_SIZE_IN_BYTES = 1024 * 1024;
 
 static size_t sizeHash(ssize_t value) {
     const size_t K = 2654435769;
-    const size_t L = 51;
-    return (size_t)((value + L) * K) & (CACHE_BLOCK_COUNT - 1);
+    return (size_t)((value * K) & (CACHE_BLOCK_COUNT - 1));
 }
 
 static size_t sizeHashByFdAndOffset(int fd, off_t offset) {
-    const ssize_t A = 37;
-    const ssize_t B = 43;
-    ssize_t value = (fd * A) * (offset + B);
+    ssize_t value = fd ^ offset;
     return sizeHash(value);
 }
 
