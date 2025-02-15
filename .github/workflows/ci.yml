@@ -51,3 +51,9 @@ jobs:
           cd ../..
           python3 benchmarkChecker.py benchmark-2 "./build/benchmark-starter"
           python3 outputCleaner.py "./build/benchmark-starter/*output.txt"
+
+      - name: Test cache on opening one file many times and using threads
+        run: |
+          cd ./build/test-cache-module/
+          ./test-cache-module
+          cd ../..
