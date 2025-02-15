@@ -5,17 +5,36 @@
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define RW_ALL 0666
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+#define FILE_INFO_ARRAY_CAPACITY 8
+
 typedef enum {
     READ_MODE,
     WRITE_MODE
 } Mode;
+
+typedef struct {
+    ino_t inode;
+    dev_t device;
+    int fd;
+    bool isFileOpen;
+} FileInfo;
+
+typedef struct {
+    size_t size;
+    size_t capacity;
+    FileInfo *array;
+} FileInfoArray;
+
+static FileInfoArray *fileInfoArray;
 
 static pthread_mutex_t commonMutex;
 static ErrorHandler handler = {SUCCESS_CODE};
@@ -25,28 +44,101 @@ static size_t ceilDiv(size_t a, size_t b) {
     return a / b + (a % b != 0);
 }
 
+static void initializeFileInfoArray() {
+    fileInfoArray = (FileInfoArray *)malloc(sizeof(FileInfoArray));
+    if (fileInfoArray == NULL) {
+        handler.statusCode = errno;
+        return;
+    }
+    fileInfoArray->size = 0;
+    fileInfoArray->array = (FileInfo *)malloc(sizeof(FileInfo) * FILE_INFO_ARRAY_CAPACITY);
+    if (fileInfoArray == NULL) {
+        handler.statusCode = errno;
+        return;
+    }
+    fileInfoArray->capacity = 8;
+}
+
+static void freeFileInfoArray() {
+    free(fileInfoArray->array);
+    free(fileInfoArray);
+}
+
 void initializeLRUCache() {
     pthread_mutex_init(&commonMutex, NULL);
     assert(lruCache == NULL);
+    initializeFileInfoArray();
     lruCache = createLRUCache(&handler);
 }
 
 void destroyLRUCache() {
     assert(lruCache != NULL);
     freeLRUCache(lruCache);
+    lruCache = NULL;
+    freeFileInfoArray();
     pthread_mutex_destroy(&commonMutex);
+}
+
+static int getFdOfOpenedFile(const char *path) {
+    struct stat fileStat;
+    stat(path, &fileStat);
+    for (int i = 0; i < fileInfoArray->size; i++) {
+        if (fileStat.st_ino == fileInfoArray->array[i].inode &&
+            fileStat.st_dev == fileInfoArray->array[i].device) {
+            return fileInfoArray->array[i].fd;
+        }
+    }
+    return -1;
+}
+
+static void addFdOfOpenedFile(int fd) {
+    struct stat fileStat;
+    fstat(fd, &fileStat);
+    FileInfo newFileInfo = {fileStat.st_ino, fileStat.st_dev, fd, true};
+    for (int i = 0; i < fileInfoArray->size; i++) {
+        if (!fileInfoArray->array[i].isFileOpen) {
+            fileInfoArray->array[i] = newFileInfo;
+            return;
+        }
+    }
+    if (fileInfoArray->size == fileInfoArray->capacity) {
+        size_t newCapacity = fileInfoArray->capacity * 2;
+        FileInfo *temp = realloc(fileInfoArray->array, sizeof(FileInfo) * newCapacity);
+        if (temp == NULL) {
+            handler.statusCode = errno;
+            return;
+        }
+        fileInfoArray->capacity = newCapacity;
+        fileInfoArray->array = temp;
+    }
+    fileInfoArray->array[fileInfoArray->size] = newFileInfo;
+    fileInfoArray->size++;
+}
+
+static void setClosedFlagByFd(int fd) {
+    for (int i = 0; i < fileInfoArray->size; i++) {
+        if (fileInfoArray->array[i].fd == fd) {
+            fileInfoArray->array[i].isFileOpen = false;
+            return;
+        }
+    }
 }
 
 #if defined(__APPLE__)
 static int cioOpenApple(const char *path) {
-    int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+    int fd = getFdOfOpenedFile(path);
     if (fd == -1) {
-        return -1;
-    }
-    int fcntl_ = fcntl(fd, F_NOCACHE, 1);
-    if (fcntl_ == -1) {
-        close(fd);
-        return -1;
+        fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+        if (fd == -1) {
+            return -1;
+        }
+        addFdOfOpenedFile(fd);
+        int fcntl_ = fcntl(fd, F_NOCACHE, 1);
+        if (fcntl_ == -1) {
+            setClosedFlagByFd(fd);
+            close(fd);
+            return -1;
+        }
     }
     return fd;
 }
@@ -54,18 +146,28 @@ static int cioOpenApple(const char *path) {
 
 #if defined(__linux__) && defined(O_DIRECT)
 static int cioOpenLinux(const char *path) {
-    return open(path, O_SYNC | O_RDWR | O_CREAT | O_DIRECT, RW_ALL);
+    int fd = getFdOfOpenedFile(path);
+    if (fd == -1) {
+        fd = open(path, O_SYNC | O_RDWR | O_CREAT | O_DIRECT, RW_ALL);
+        addFdOfOpenedFile(fd);
+    }
+    return fd;
 }
 #endif
 
 #if !defined(__APPLE__) && !(defined(__linux__) && defined(O_DIRECT))
 static int cioOpenUnknown(const char *path) {
-    int fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+    int fd = getFdOfOpenedFile(path);
     if (fd == -1) {
-        close(fd);
-        return -1;
+        fd = open(path, O_SYNC | O_RDWR | O_CREAT, RW_ALL);
+        if (fd == -1) {
+            setClosedFlagByFd(fd);
+            close(fd);
+            return -1;
+        }
+        addFdOfOpenedFile(fd);
+        posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
     }
-    posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
     return fd;
 }
 #endif
@@ -92,6 +194,7 @@ int cioClose(int fd) {
         }
     }
     pthread_mutex_unlock(&commonMutex);
+    setClosedFlagByFd(fd);
     return close(fd);
 }
 
