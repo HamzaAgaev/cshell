@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define B2_OUTPUT_FILENAME_FORMAT "b2-" OUTPUT_FILENAME_FORMAT
+
 RunResult benchmark2() {
     int inputFd = lab2Open(INPUT_FILENAME);
     if (inputFd == -1) {
@@ -31,7 +33,7 @@ RunResult benchmark2() {
     generateRandomString(fileNamePrefix, GEN_STR_LEN + 1, DEFAULT_SEED);
 
     char outputFileName[MAX_FILENAME_LEN];
-    snprintf(outputFileName, sizeof(outputFileName), OUTPUT_FILENAME_FORMAT, fileNamePrefix);
+    snprintf(outputFileName, sizeof(outputFileName), B2_OUTPUT_FILENAME_FORMAT, fileNamePrefix);
     int outputFd = lab2Open(outputFileName);
     if (outputFd == -1) {
         free(inputNumbers);
