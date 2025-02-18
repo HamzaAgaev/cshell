@@ -1,16 +1,6 @@
 #ifndef CSHELL_UTILS_H
 #define CSHELL_UTILS_H
 
-#define INPUT_FILENAME "input.txt"
-#define TEMP_FILENAME_FORMAT "%s-temp-%d.txt"
-#define OUTPUT_FILENAME_FORMAT "%s-output.txt"
-
-#include <time.h>
-
-#define DEFAULT_SEED ((unsigned int)time(NULL))
-#define GEN_STR_LEN 4
-#define MAX_FILENAME_LEN 20
-
 #define SUCCESS_CODE 0
 #define DEFAULT_ERROR_CODE (-1)
 
