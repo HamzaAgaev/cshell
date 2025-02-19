@@ -40,7 +40,7 @@ def check_is_dedup_file(input_file_, output_file_):
         return False
     input_numbers = list(map(int, input_file_.readline().split()))
     output_numbers = list(map(int, output_file_.readline().split()))
-    return Counter(output_numbers) == Counter(set(output_numbers))
+    return Counter(output_numbers) == Counter(set(input_numbers))
 
 
 if __name__ == "__main__":
