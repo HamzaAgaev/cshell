@@ -221,10 +221,6 @@ size_t syncFileBlock(FileBlock *fileBlock, ErrorHandler *handler) {
     off_t offset = fileBlock->offset;
     size_t size = fileBlock->size;
     unsigned char *data = fileBlock->data;
-    if (lseek(fileBlock->fd, offset, SEEK_SET) == -1) {
-        handler->statusCode = errno;
-        return bytesSynced;
-    }
     bytesSynced = pwrite(fileBlock->fd, data, size, offset);
     if (bytesSynced == -1) {
         handler->statusCode = errno;
