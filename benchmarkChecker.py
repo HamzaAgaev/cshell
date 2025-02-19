@@ -24,6 +24,8 @@ def get_benchmark_name(file_path):
 
 
 def check_is_sorted_file(input_file_, output_file_):
+    input_file_.seek(0)
+    output_file_.seek(0)
     if input_file_.readline() != output_file_.readline():
         return False
     input_numbers = list(map(int, input_file_.readline().split()))
@@ -32,6 +34,8 @@ def check_is_sorted_file(input_file_, output_file_):
 
 
 def check_is_dedup_file(input_file_, output_file_):
+    input_file_.seek(0)
+    output_file_.seek(0)
     if input_file_.readline() != output_file_.readline():
         return False
     input_numbers = list(map(int, input_file_.readline().split()))
@@ -58,8 +62,8 @@ if __name__ == "__main__":
         if not is_success:
             is_fail = True
             print(f"{benchmark} отрабатывает неправильно для файла {get_file_name(output_file_path)}.")
-
+        output_file.close()
+    input_file.close()
     if is_fail:
         raise Exception("Нагрузчики отрабатывают неправильно!")
-
     print("Done!")
