@@ -7,14 +7,24 @@
 const size_t CACHE_BLOCK_COUNT = 64;
 const size_t CACHE_BLOCK_SIZE_IN_BYTES = 1024 * 1024;
 
-static size_t sizeHash(ssize_t value) {
+static size_t sizeHash(size_t value) {
     const size_t K = 2654435769;
-    return (size_t)((value * K) & (CACHE_BLOCK_COUNT - 1));
+    return (value * K) & (CACHE_BLOCK_COUNT - 1);
 }
 
-static size_t sizeHashByFdAndOffset(int fd, off_t offset) {
-    ssize_t value = fd ^ offset;
+static size_t sizeHashByFileIdAndOffset(FileId fileId, off_t offset) {
+    size_t value = fileId.inode ^ fileId.device ^ offset;
     return sizeHash(value);
+}
+
+FileId getFileIdByFd(int fd) {
+    struct stat fileStat;
+    fstat(fd, &fileStat);
+    return (FileId){fd, fileStat.st_ino, fileStat.st_dev};
+}
+
+bool isSameFile(FileId fileId1, FileId fileId2) {
+    return fileId1.inode == fileId2.inode && fileId1.device == fileId2.device;
 }
 
 LRUCache *createLRUCache(ErrorHandler *handler) {
@@ -37,13 +47,13 @@ LRUCache *createLRUCache(ErrorHandler *handler) {
     return lruCache;
 }
 
-static FileBlock *createFileBlock(int fd, off_t offset, ErrorHandler *handler) {
+static FileBlock *createFileBlock(FileId fileId, off_t offset, ErrorHandler *handler) {
     FileBlock *fileBlock = (FileBlock *)malloc(sizeof(FileBlock));
     if (fileBlock == NULL) {
         handler->statusCode = errno;
         return fileBlock;
     }
-    fileBlock->fd = fd;
+    fileBlock->fileId = fileId;
     fileBlock->offset = offset;
     fileBlock->data = (unsigned char *)calloc(CACHE_BLOCK_SIZE_IN_BYTES, sizeof(unsigned char));
     if (fileBlock->data == NULL) {
@@ -120,11 +130,11 @@ off_t getAlignedOffset(off_t offset) {
     return (off_t)((offset / CACHE_BLOCK_SIZE_IN_BYTES) * CACHE_BLOCK_SIZE_IN_BYTES);
 }
 
-static HashListNode *getHashListNode(LRUCache *lruCache, int fd, off_t offset) {
-    size_t hashIndex = sizeHashByFdAndOffset(fd, offset);
+static HashListNode *getHashListNode(LRUCache *lruCache, FileId fileId, off_t offset) {
+    size_t hashIndex = sizeHashByFileIdAndOffset(fileId, offset);
     HashListNode *hashListNode = lruCache->hashTable[hashIndex];
     while (hashListNode != NULL) {
-        if (hashListNode->listNode->fileBlock->fd == fd &&
+        if (isSameFile(hashListNode->listNode->fileBlock->fileId, fileId) &&
             hashListNode->listNode->fileBlock->offset == offset) {
             break;
         }
@@ -153,8 +163,8 @@ static void moveDataListNodeToHead(LRUCache *lruCache, DataListNode *listNode) {
     }
 }
 
-static DataListNode *findDataListNode(LRUCache *lruCache, int fd, off_t offset) {
-    HashListNode *hashListNode = getHashListNode(lruCache, fd, offset);
+static DataListNode *findDataListNode(LRUCache *lruCache, FileId fileId, off_t offset) {
+    HashListNode *hashListNode = getHashListNode(lruCache, fileId, offset);
     if (hashListNode == NULL) {
         return NULL;
     }
@@ -190,9 +200,9 @@ static void removeHashListNode(LRUCache *lruCache, HashListNode *hashListNode) {
     if (next != NULL) {
         next->prev = prev;
     }
-    int fd = hashListNode->listNode->fileBlock->fd;
+    FileId fileId = hashListNode->listNode->fileBlock->fileId;
     off_t offset = hashListNode->listNode->fileBlock->offset;
-    size_t hashIndex = sizeHashByFdAndOffset(fd, offset);
+    size_t hashIndex = sizeHashByFileIdAndOffset(fileId, offset);
     if (lruCache->hashTable[hashIndex] == hashListNode) {
         lruCache->hashTable[hashIndex] = hashListNode->next;
     }
@@ -209,7 +219,7 @@ void deleteCacheBlockByDataListNode(LRUCache *lruCache, DataListNode *listNode, 
         return;
     }
     HashListNode *hashListNodeToFree = getHashListNode(
-            lruCache, listNode->fileBlock->fd, listNode->fileBlock->offset);
+            lruCache, listNode->fileBlock->fileId, listNode->fileBlock->offset);
     removeDataListNode(lruCache, listNode);
     removeHashListNode(lruCache, hashListNodeToFree);
     freeCacheBlockByHashListNode(hashListNodeToFree);
@@ -218,7 +228,7 @@ void deleteCacheBlockByDataListNode(LRUCache *lruCache, DataListNode *listNode, 
 
 size_t readBlockFromFile(FileBlock *fileBlock, ErrorHandler *handler) {
     ssize_t bytesRead = 0;
-    int fd = fileBlock->fd;
+    int fd = fileBlock->fileId.initialFd;
     off_t offset = fileBlock->offset;
     bytesRead = pread(fd, fileBlock->data, CACHE_BLOCK_SIZE_IN_BYTES, offset);
     if (bytesRead == -1) {
@@ -232,7 +242,7 @@ size_t readBlockFromFile(FileBlock *fileBlock, ErrorHandler *handler) {
 
 size_t writeBlockToFile(FileBlock *fileBlock, ErrorHandler *handler) {
     size_t bytesSynced = 0;
-    int fd = fileBlock->fd;
+    int fd = fileBlock->fileId.initialFd;
     off_t offset = fileBlock->offset;
     size_t size = fileBlock->size;
     bytesSynced = pwrite(fd, fileBlock->data, size, offset);
@@ -249,8 +259,8 @@ static void removeLeastRecentlyUsed(LRUCache *lruCache, ErrorHandler *handler) {
     deleteCacheBlockByDataListNode(lruCache, listTail, handler);
 }
 
-static DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t offset, ErrorHandler *handler) {
-    size_t hashIndex = sizeHashByFdAndOffset(fd, offset);
+static DataListNode *addDataListNode(LRUCache *lruCache, FileId fileId, off_t offset, ErrorHandler *handler) {
+    size_t hashIndex = sizeHashByFileIdAndOffset(fileId, offset);
     HashListNode *hashListNode = lruCache->hashTable[hashIndex];
     bool isEmptyNode = false;
     if (hashListNode == NULL) {
@@ -260,7 +270,7 @@ static DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t offset, E
         hashListNode = hashListNode->next;
     }
     DataListNode *listNode = NULL;
-    FileBlock *fileBlock = createFileBlock(fd, offset, handler);
+    FileBlock *fileBlock = createFileBlock(fileId, offset, handler);
     if (handler->statusCode != SUCCESS_CODE) {
         return listNode;
     }
@@ -291,11 +301,11 @@ static DataListNode *addDataListNode(LRUCache *lruCache, int fd, off_t offset, E
     return listNode;
 }
 
-FileBlock *getFileBlock(LRUCache *lruCache, int fd, off_t offset, ErrorHandler *handler) {
+FileBlock *getFileBlock(LRUCache *lruCache, FileId fileId, off_t offset, ErrorHandler *handler) {
     FileBlock *fileBlock = NULL;
-    DataListNode *listNode = findDataListNode(lruCache, fd, offset);
+    DataListNode *listNode = findDataListNode(lruCache, fileId, offset);
     if (listNode == NULL) {
-        listNode = addDataListNode(lruCache, fd, offset, handler);
+        listNode = addDataListNode(lruCache, fileId, offset, handler);
     }
     if (handler->statusCode != SUCCESS_CODE) {
         return fileBlock;
