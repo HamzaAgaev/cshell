@@ -203,7 +203,7 @@ static void removeHashListNode(LRUCache *lruCache, HashListNode *hashListNode) {
 void deleteCacheBlockByDataListNode(LRUCache *lruCache, DataListNode *listNode, ErrorHandler *handler) {
     FileBlock *fileBlock = listNode->fileBlock;
     if (fileBlock->status != SYNCED) {
-        syncFileBlock(fileBlock, handler);
+        writeBlockToFile(fileBlock, handler);
     }
     if (handler->statusCode != SUCCESS_CODE) {
         return;
@@ -216,12 +216,26 @@ void deleteCacheBlockByDataListNode(LRUCache *lruCache, DataListNode *listNode, 
     lruCache->size--;
 }
 
-size_t syncFileBlock(FileBlock *fileBlock, ErrorHandler *handler) {
+size_t readBlockFromFile(FileBlock *fileBlock, ErrorHandler *handler) {
+    ssize_t bytesRead = 0;
+    int fd = fileBlock->fd;
+    off_t offset = fileBlock->offset;
+    bytesRead = pread(fd, fileBlock->data, CACHE_BLOCK_SIZE_IN_BYTES, offset);
+    if (bytesRead == -1) {
+        handler->statusCode = errno;
+        return bytesRead;
+    }
+    fileBlock->size = bytesRead;
+    fileBlock->status = READ;
+    return bytesRead;
+}
+
+size_t writeBlockToFile(FileBlock *fileBlock, ErrorHandler *handler) {
     size_t bytesSynced = 0;
+    int fd = fileBlock->fd;
     off_t offset = fileBlock->offset;
     size_t size = fileBlock->size;
-    unsigned char *data = fileBlock->data;
-    bytesSynced = pwrite(fileBlock->fd, data, size, offset);
+    bytesSynced = pwrite(fd, fileBlock->data, size, offset);
     if (bytesSynced == -1) {
         handler->statusCode = errno;
         return bytesSynced;

@@ -50,7 +50,8 @@ LRUCache *createLRUCache(ErrorHandler *handler);
 void freeLRUCache(LRUCache *lruCache);
 off_t getAlignedOffset(off_t offset);
 void deleteCacheBlockByDataListNode(LRUCache *lruCache, DataListNode *listNode, ErrorHandler *handler);
-size_t syncFileBlock(FileBlock *fileBlock, ErrorHandler *handler);
+size_t writeBlockToFile(FileBlock *fileBlock, ErrorHandler *handler);
+size_t readBlockFromFile(FileBlock *fileBlock, ErrorHandler *handler);
 FileBlock *getFileBlock(LRUCache *lruCache, int fd, off_t offset, ErrorHandler *handler);
 
 #endif//CSHELL_CACHE_H

@@ -95,22 +95,6 @@ int cioClose(int fd) {
     return close(fd);
 }
 
-static void readBlockFromFile(FileBlock *fileBlock) {
-    int fd = fileBlock->fd;
-    off_t offset = fileBlock->offset;
-    if (offset == -1) {
-        handler.statusCode = errno;
-        return;
-    }
-    ssize_t bytesRead = pread(fd, fileBlock->data, CACHE_BLOCK_SIZE_IN_BYTES, offset);
-    if (bytesRead == -1) {
-        handler.statusCode = errno;
-        return;
-    }
-    fileBlock->size = bytesRead;
-    fileBlock->status = READ;
-}
-
 static ssize_t cioReadWrite(int fd, void *buf, size_t count, Mode mode) {
     off_t offset = lseek(fd, 0, SEEK_CUR);
     if (offset == -1) {
@@ -131,7 +115,11 @@ static ssize_t cioReadWrite(int fd, void *buf, size_t count, Mode mode) {
             return -1;
         }
         if (fileBlock->status == NEW) {
-            readBlockFromFile(fileBlock);
+            readBlockFromFile(fileBlock, &handler);
+            if (handler.statusCode != SUCCESS_CODE) {
+                pthread_mutex_unlock(&commonMutex);
+                return -1;
+            }
         }
         off_t beginOffset;
         off_t endOffset;
@@ -198,7 +186,7 @@ int cioFsync(int fd) {
         SyncStatus syncStatus = fileBlock->status;
         int currentFd = fileBlock->fd;
         if (currentFd == fd && syncStatus != SYNCED) {
-            size_t bytesSynced = syncFileBlock(fileBlock, &handler);
+            size_t bytesSynced = writeBlockToFile(fileBlock, &handler);
             if (handler.statusCode != SUCCESS_CODE) {
                 pthread_mutex_unlock(&commonMutex);
                 return -1;
