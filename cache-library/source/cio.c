@@ -34,6 +34,7 @@ void initializeLRUCache() {
 void destroyLRUCache() {
     assert(lruCache != NULL);
     freeLRUCache(lruCache);
+    lruCache = NULL;
     pthread_mutex_destroy(&commonMutex);
 }
 
@@ -83,11 +84,12 @@ int cioOpen(const char *path) {
 int cioClose(int fd) {
     pthread_mutex_lock(&commonMutex);
     DataListNode *listNode = lruCache->listHead;
+    FileId fileId = getFileIdByFd(fd);
     while (listNode != NULL) {
-        int currentFd = listNode->fileBlock->fd;
+        FileId currentFileId = listNode->fileBlock->fileId;
         DataListNode *listNodeCopy = listNode;
         listNode = listNode->next;
-        if (currentFd == fd) {
+        if (isSameFile(currentFileId, fileId)) {
             deleteCacheBlockByDataListNode(lruCache, listNodeCopy, &handler);
         }
     }
@@ -96,6 +98,7 @@ int cioClose(int fd) {
 }
 
 static ssize_t cioReadWrite(int fd, void *buf, size_t count, Mode mode) {
+    pthread_mutex_lock(&commonMutex);
     off_t offset = lseek(fd, 0, SEEK_CUR);
     if (offset == -1) {
         return -1;
@@ -106,10 +109,10 @@ static ssize_t cioReadWrite(int fd, void *buf, size_t count, Mode mode) {
     if (lseek(fd, alignedOffset, SEEK_SET) == -1) {
         return -1;
     }
-    pthread_mutex_lock(&commonMutex);
     ssize_t resultSize = 0;
+    FileId fileId = getFileIdByFd(fd);
     for (off_t currentOffset = alignedOffset; currentOffset < alignedOffset + bytesBeUsedInCache; currentOffset += (off_t)CACHE_BLOCK_SIZE_IN_BYTES) {
-        FileBlock *fileBlock = getFileBlock(lruCache, fd, currentOffset, &handler);
+        FileBlock *fileBlock = getFileBlock(lruCache, fileId, currentOffset, &handler);
         if (handler.statusCode != SUCCESS_CODE) {
             pthread_mutex_unlock(&commonMutex);
             return -1;
@@ -158,10 +161,10 @@ static ssize_t cioReadWrite(int fd, void *buf, size_t count, Mode mode) {
             }
         }
     }
-    pthread_mutex_unlock(&commonMutex);
     if (lseek(fd, (off_t)(offset + resultSize), SEEK_SET) == -1) {
         return -1;
     }
+    pthread_mutex_unlock(&commonMutex);
     return resultSize;
 }
 
@@ -181,11 +184,12 @@ int cioFsync(int fd) {
     pthread_mutex_lock(&commonMutex);
     size_t cacheSize = lruCache->size;
     size_t totalSyncedBytes = 0;
+    FileId fileId = getFileIdByFd(fd);
     for (int i = 0; i < cacheSize; i++) {
         FileBlock *fileBlock = lruCache->listHead[i].fileBlock;
         SyncStatus syncStatus = fileBlock->status;
-        int currentFd = fileBlock->fd;
-        if (currentFd == fd && syncStatus != SYNCED) {
+        FileId currentFileId = fileBlock->fileId;
+        if (isSameFile(currentFileId, fileId) && syncStatus != SYNCED) {
             size_t bytesSynced = writeBlockToFile(fileBlock, &handler);
             if (handler.statusCode != SUCCESS_CODE) {
                 pthread_mutex_unlock(&commonMutex);
