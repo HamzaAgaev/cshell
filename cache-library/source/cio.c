@@ -95,18 +95,15 @@ int cioClose(int fd) {
     return close(fd);
 }
 
-static void readBlockFromFile(FileBlock *fileBlock, int fd) {
-    off_t offset = lseek(fd, 0, SEEK_CUR);
+static void readBlockFromFile(FileBlock *fileBlock) {
+    int fd = fileBlock->fd;
+    off_t offset = fileBlock->offset;
     if (offset == -1) {
         handler.statusCode = errno;
         return;
     }
     ssize_t bytesRead = pread(fd, fileBlock->data, CACHE_BLOCK_SIZE_IN_BYTES, offset);
     if (bytesRead == -1) {
-        handler.statusCode = errno;
-        return;
-    }
-    if (lseek(fd, offset + bytesRead, SEEK_SET) == -1) {
         handler.statusCode = errno;
         return;
     }
@@ -134,7 +131,7 @@ static ssize_t cioReadWrite(int fd, void *buf, size_t count, Mode mode) {
             return -1;
         }
         if (fileBlock->status == NEW) {
-            readBlockFromFile(fileBlock, fd);
+            readBlockFromFile(fileBlock);
         }
         off_t beginOffset;
         off_t endOffset;
