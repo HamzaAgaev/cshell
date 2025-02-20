@@ -54,7 +54,7 @@ RunResult benchmark1() {
 
     for (int i = 0; i < numbersCount; i++) {
         readIntFromFile(inputFd, &block[i % blockSize]);
-        if ((i != 0 && (i + 1) % blockSize == 0) || i == numbersCount - 1) {
+        if ((i != 0 && (i + 1) % blockSize == 0) || i == numbersCount - 1 || blockSize == 1) {
             char tempFileName[MAX_FILENAME_LEN];
             const int fileIndex = ceilDiv((i + 1), blockSize) - 1;
             fileNames[fileIndex] = malloc(MAX_FILENAME_LEN * sizeof(char));
