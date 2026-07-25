@@ -41,7 +41,7 @@ jobs:
           cd ./build/benchmark-starter/
           ./benchmark-starter processes 1 0
           cd ../..
-          python3 benchmarkChecker.py benchmark-1 "./build/benchmark-starter/*output.txt"
+          python3 benchmarkChecker.py "./build/benchmark-starter"
           python3 outputCleaner.py "./build/benchmark-starter/*output.txt"
 
       - name: Test benchmark-2
@@ -49,5 +49,19 @@ jobs:
           cd ./build/benchmark-starter/
           ./benchmark-starter threads 0 1
           cd ../..
-          python3 benchmarkChecker.py benchmark-2 "./build/benchmark-starter/*output.txt"
+          python3 benchmarkChecker.py "./build/benchmark-starter"
           python3 outputCleaner.py "./build/benchmark-starter/*output.txt"
+
+      - name: Test all benchmarks on threads
+        run: |
+          cd ./build/benchmark-starter/
+          ./benchmark-starter threads 3 3
+          cd ../..
+          python3 benchmarkChecker.py "./build/benchmark-starter"
+          python3 outputCleaner.py "./build/benchmark-starter/*output.txt"
+
+      - name: Test cache on opening one file many times and using threads
+        run: |
+          cd ./build/test-cache-module/
+          ./test-cache-module
+          cd ../..

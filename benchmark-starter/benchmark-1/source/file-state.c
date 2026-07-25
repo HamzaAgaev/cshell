@@ -1,11 +1,14 @@
 #include "file-state.h"
 
+#include "benchmark-utils.h"
+#include "cio.h"
+
 #include <errno.h>
 
-void initializeFileState(FileState *fileState, const char *filename, ErrorCatcher *catcher) {
-    fileState->file = fopen(filename, "rb");
-    if (fileState->file == NULL) {
-        catcher->statusCode = errno;
+void initializeFileState(FileState *fileState, const char *filename, ErrorHandler *handler) {
+    fileState->fd = cioOpen(filename);
+    if (fileState->fd == -1) {
+        handler->statusCode = errno;
         return;
     }
     fileState->isEndOfFile = false;
@@ -13,11 +16,11 @@ void initializeFileState(FileState *fileState, const char *filename, ErrorCatche
 }
 
 void updateFileState(FileState *fileState) {
-    if (fscanf(fileState->file, "%d", &fileState->value) != 1) {
+    if (readIntFromFile(fileState->fd, &fileState->value) == 0) {
         fileState->isEndOfFile = true;
     }
 }
 
 void closeFileState(FileState *fileState) {
-    fclose(fileState->file);
+    cioClose(fileState->fd);
 }

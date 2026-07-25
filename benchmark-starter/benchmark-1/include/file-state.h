@@ -7,12 +7,12 @@
 #include <stdio.h>
 
 typedef struct {
-    FILE *file;
+    int fd;
     int value;
     bool isEndOfFile;
 } FileState;
 
-void initializeFileState(FileState *fileState, const char *filename, ErrorCatcher *catcher);
+void initializeFileState(FileState *fileState, const char *filename, ErrorHandler *handler);
 
 void updateFileState(FileState *fileState);
 
