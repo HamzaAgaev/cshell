@@ -1,9 +1,9 @@
 #include "benchmark-1.h"
 
 #include "benchmark-utils.h"
+#include "cio.h"
 #include "file-state.h"
 #include "heap-lib.h"
-#include "cio.h"
 
 #include <errno.h>
 #include <stdio.h>
